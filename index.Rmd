@@ -1,0 +1,109 @@
+---
+title: "Machine Learning Project"
+output: html_document
+---
+
+## Rean in the data
+
+```{r, echo = TRUE}
+# Load relevant libraries
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(knitr)
+```
+
+First we need to read in the data and explore it:
+
+```{r, echo = TRUE}
+url_raw_data <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+url_validation <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+raw_data <- read.csv(url_raw_data, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+validation_data <- read.csv(url_validation, sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+
+dim(raw_data)
+```
+
+We see that we have 160 variables and 19622 observations. So we need to choose the needed variables for this assessment. 
+The paper <http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201> in section 5.1 gives a brief explanation on which variables were used. The paper mentions that apart from the measurements of the sensors, summary statistics were calculated and only sum of the results were used for prediction. In this analysis, I will only use the measurements from the sensors as they will be better predictors for the validation data. Furthermore, I will exclude all variables which contain missing values
+
+## Clean the data
+
+```{r, echo = TRUE}
+# Remove NA columns from the training data and drop first 7 rows which are not useful for analysis because they contain information of testing subjects and time measurements variables
+clean_train <- raw_data[, colSums(is.na(raw_data)) == 0] %>%
+  select(-c(1:7))
+
+# Explore whether we still have near zero variance 
+near_zero <- nearZeroVar(clean_train, saveMetrics = TRUE)
+near_zero[near_zero$nzv == "TRUE",] # Non are near zero variace
+
+# Do the same as above for the validation data
+clean_validation <- validation_data[, colSums(is.na(validation_data)) == 0] %>%
+  select(-c(1:7))
+
+```
+
+After cleaning the data we are left with 53 variables. In essence these are variables which contain only the measurements made from the sensors. 
+
+## Split the clean data and Pre Process it
+
+```{r, echo = TRUE}
+# Set seed for reproducible purposes
+set.seed(541)
+
+# Split training dataset into test and training
+inTrain <- createDataPartition(y=clean_train$classe,p=0.6, list=FALSE)
+training <- clean_train[inTrain,]
+testing <- clean_train[-inTrain,]
+
+# Detect and remove collinear variables
+cor_matrix <- cor(training[,-53]) # Make a corelation matrix without the "classes" variable
+train_cor <- findCorrelation(cor_matrix, cutoff = .90) # Find correlation above 90% in the correlation matrix
+training <- training[,-train_cor] # Take out correlated variables from the training and testing data sets
+testing <- testing[,-train_cor]
+
+```
+
+## Model building
+
+```{r, echo = TRUE}
+# Create a Random forest prediction model
+# (Note - I used a parallel process for computing to reduce calculation time)
+
+# Open and prepare for parallel processing
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+
+fit_rf <- train(classe ~., method="rf", data=training, trControl = fitControl) # Fit a random forest model
+
+stopCluster(cluster) # Close parallel processing
+registerDoSEQ()
+
+# Predict on testing set 
+predict_testing <- predict(fit_rf, testing)
+confusionMatrix(predict_testing, testing$classe)$overall[1]
+
+```
+
+
+## Predict on validation data set
+
+```{r, echo =TRUE}
+final <- predict(fit_rf, validation_data)
+final
+```
+
+
+## Conclution
+
+The Model seems to be accurate enough for prediction
+
+
